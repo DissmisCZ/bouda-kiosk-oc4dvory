@@ -215,7 +215,7 @@ function sendOrQueue(payload){
 function vote(value){
   if(!canVote()) return;
   startCooldown(); showThanks();
-  const payload = { time:new Date().toISOString(), value:Number(value), kiosk:"Bouda-kiosek", question:"Ohodnoť dnešní nákup" };
+  const payload = { time:new Date().toISOString(), value:Number(value), kiosk:"Bouda-kiosek-OC4Dvory", question:"Ohodnoť dnešní nákup" };
   sendOrQueue(payload);
 }
 document.querySelectorAll('.btn').forEach(b=> b.addEventListener('click', ()=> vote(b.dataset.value), {passive:true}));
