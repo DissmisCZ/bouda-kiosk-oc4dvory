@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="cs">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#000000" />
+  <title>Bouda Feedback Kiosk</title>
+  <link rel="manifest" href="manifest.json" />
+  <style>
+    /* Zákaz výběru a dlouhého podržení (blokuje „Vyhledat“) */
+    html, body, * {
+      -webkit-user-select: none !important;
+      user-select: none !important;
+      -webkit-touch-callout: none !important;
+      -webkit-tap-highlight-color: transparent;
+    }
+    img, svg, button { -webkit-user-drag: none; user-drag: none; -webkit-touch-callout: none; }
+    /* Pro jistotu deaktivuj odkazy */
+    a, [role="link"] { pointer-events: none !important; }
+
+    :root{
+      --tile: clamp(120px, 18vmin, 220px);
+      --gap: clamp(12px, 2vmin, 24px);
+      --radius: clamp(14px, 2.2vmin, 22px);
+      --bg:#000; --text:#fff; --muted:#bfc0c9; --accent:#f0a344;
+      --tile-bg:#111; --tile-bg-hover:#151515; --tile-border:#242424;
+    }
+    html,body{height:100%;margin:0;background:var(--bg);color:var(--text);
+              font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Arial,sans-serif}
+    body{display:flex;align-items:center;justify-content:center;overflow:hidden}
+    .container{width:min(1400px,96vw);padding:clamp(10px,3vmin,40px);display:grid;
+               grid-template-rows:auto auto 1fr;row-gap:clamp(8px,1.6vmin,16px);
+               justify-items:center;text-align:center}
+    .brand{color:var(--accent);text-transform:uppercase;letter-spacing:.2em;
+           font-weight:800;font-size:clamp(28px,8vmin,92px)}
+    h1{margin:.1em 0 0;font-weight:800;font-size:clamp(28px,6.2vmin,64px);line-height:1.06}
+    .sub{margin:.2em 0 0;color:var(--muted);font-size:clamp(16px,3vmin,28px)}
+    .grid{margin-top:clamp(12px,2.2vmin,24px);display:grid;
+          grid-template-columns:repeat(auto-fit,minmax(var(--tile),1fr));
+          gap:var(--gap);width:100%;place-items:center}
+    .cell{display:flex;flex-direction:column;align-items:center;gap:clamp(6px,1.2vmin,12px)}
+    .btn{width:var(--tile);height:var(--tile);border:none;cursor:pointer;border-radius:var(--radius);
+         background:var(--tile-bg);box-shadow:0 0 0 1px var(--tile-border);
+         display:grid;place-items:center;transition:transform .06s ease,background .15s,box-shadow .15s;
+         will-change:transform}
+    .btn:hover{background:var(--tile-bg-hover);box-shadow:0 0 0 1px #2d2d2d}
+    .btn:active{transform:scale(.965)}
+    .emoji{font-size:calc(var(--tile) * .55);line-height:1}
+    .label{color:var(--muted);font-size:clamp(14px,1.9vmin,20px);white-space:nowrap}
+    .overlay{position:fixed;inset:0;display:grid;place-items:center;background:rgba(0,0,0,.62);
+             opacity:0;pointer-events:none;transition:opacity .12s ease}
+    .overlay.show{opacity:1;pointer-events:auto}
+    .thanks{font-size:clamp(26px,4.8vmin,56px);
+            padding:clamp(10px,1.6vmin,18px) clamp(16px,2.4vmin,28px);
+            border-radius:var(--radius);color:#ffe6c7;border:1px solid rgba(240,163,68,.6);
+            background:#161002;transform:scale(.96);opacity:0;transition:transform .12s,opacity .12s}
+    .overlay.show .thanks{transform:scale(1);opacity:1}
+    #installBtn{position:fixed;right:12px;bottom:12px;padding:10px 14px;border-radius:12px;border:1px solid #2a2a2a;
+                background:#101010;color:#fff;font-size:14px;display:none}
+  </style>
+</head>
+<body>
+  <main class="container" aria-live="polite">
+    <div class="brand">BOUDA&nbsp;BURGERS</div>
+    <h1>Ohodnoť dnešní nákup</h1>
+    <p class="sub">Jak spokojený/á jsi byl/a s nákupem?</p>
+
+    <section id="grid" class="grid">
+      <div class="cell"><button class="btn" data-value="5" title="Velmi spokojený"><span class="emoji">😁</span></button><div class="label">Velmi spokojený</div></div>
+      <div class="cell"><button class="btn" data-value="4" title="Spokojený"><span class="emoji">🙂</span></button><div class="label">Spokojený</div></div>
+      <div class="cell"><button class="btn" data-value="3" title="Neutrální"><span class="emoji">😐</span></button><div class="label">Neutrální</div></div>
+      <div class="cell"><button class="btn" data-value="2" title="Nespokojený"><span class="emoji">🙁</span></button><div class="label">Nespokojený</div></div>
+      <div class="cell"><button class="btn" data-value="1" title="Velmi nespokojený"><span class="emoji">😡</span></button><div class="label">Velmi nespokojený</div></div>
+    </section>
+  </main>
+
+  <div id="overlay" class="overlay" aria-hidden="true">
+    <div class="thanks">Děkujeme za zpětnou vazbu!</div>
+  </div>
+
+  <button id="installBtn">Instalovat</button>
+  
+<script>
+/* ========= ROBUSTNÍ ZÁMEK ZPĚT + AUTO OBNOVA + FULLSCREEN ========= */
+
+/* 0) Pomocný flag pro PWA (instalovaná vs. prohlížeč) */
+const isStandalone = window.matchMedia('(display-mode: standalone)').matches
+                  || (window.navigator.standalone === true);
+
+/* 1) Vynucený hash, aby historie měla co „držet“ */
+(function ensureHash(){
+  if (!location.hash) {
+    history.replaceState(null, '', location.pathname + '#home');
+  }
+})();
+
+/* 2) Pevné „vycpání“ historie (2 položky) a tvrdé vracení vpřed */
+function hardenBackLock() {
+  try {
+    if (!sessionStorage.getItem('backArmed')) {
+      history.pushState({b:1}, '');
+      history.pushState({b:2}, '');
+      sessionStorage.setItem('backArmed','1');
+    }
+  } catch(_) {}
+  window.addEventListener('popstate', (e)=>{
+    // nedovolit odejít zpět – skoč rovnou dopředu
+    try { history.go(1); } catch(_) {}
+    // pro jistotu historii zase „dotuč“
+    try { history.pushState({b:3}, ''); } catch(_) {}
+  });
+}
+window.addEventListener('load', hardenBackLock);
+
+/* 3) Držet fullscreen vždy, když se appka zviditelní */
+async function ensureFullscreen() {
+  try {
+    if (!document.fullscreenElement) {
+      await document.documentElement.requestFullscreen();
+    }
+  } catch(_) {}
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') ensureFullscreen();
+});
+window.addEventListener('pageshow', () => {
+  // po návratu z BFCache znovu vycpeme historii a fullscreen
+  hardenBackLock();
+  ensureFullscreen();
+});
+
+/* 4) Watchdog: když se náhodou dostaneme na splash/mezistav,
+      rychle a potichu obnov domovskou obrazovku */
+let lastUserTick = performance.now();
+document.addEventListener('pointerdown', ()=> lastUserTick = performance.now(), {passive:true});
+document.addEventListener('keydown',     ()=> lastUserTick = performance.now(), {passive:true});
+
+function softRecover(){
+  // Pokud jsme „viditelní“, ale UI není interaktivní, přepíšeme url zpět na #home
+  if (document.visibilityState === 'visible' && document.readyState !== 'loading') {
+    if (!location.hash || location.hash !== '#home') {
+      history.replaceState(null, '', location.pathname + '#home');
+    }
+    hardenBackLock();
+    ensureFullscreen();
+  }
+}
+document.addEventListener('visibilitychange', softRecover);
+setInterval(softRecover, 1200); // jemný watchdog každých ~1.2 s
+
+/* 5) (Volitelné) Zablokovat Backspace/Escape jako „zpět“ v některých klávesnicích */
+document.addEventListener('keydown', (e)=>{
+  if (e.key === 'Backspace' || e.key === 'Escape') {
+    e.preventDefault();
+  }
+}, {passive:false});
+</script>
+
+<script>
+/*** Webhook ***/
+const WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbxKT5x3dK3TIe77wfnG7tGTkOy7ftzil1hp0loCIVl9IC1sDOLRyenqtj70a4XBmvkb/exec";
+
+/*** UX parametry ***/
+const COOLDOWN_MS = 15000;
+const THANKS_MS   = 15000;
+
+/*** Outbox (tichý) ***/
+const BOX_KEY = "bouda_outbox_pwa";
+const readBox = () => JSON.parse(localStorage.getItem(BOX_KEY) || "[]");
+const writeBox = (v)=> localStorage.setItem(BOX_KEY, JSON.stringify(v));
+
+let flushing = false;
+async function flushBox(){
+  if(flushing || !navigator.onLine) return;
+  const box = readBox(); if(!box.length) return;
+  flushing = true;
+  try{
+    while(box.length && navigator.onLine){
+      const p = box[0];
+      await fetch(WEBHOOK_URL, {
+        method:"POST", mode:"no-cors",
+        headers:{ "Content-Type":"text/plain" },
+        body: JSON.stringify(p), keepalive:true
+      });
+      box.shift(); writeBox(box);
+    }
+  }catch(_){}
+  finally{ flushing = false; }
+}
+window.addEventListener("online", flushBox);
+
+/*** „Děkujeme“ + cooldown ***/
+const overlay = document.getElementById('overlay');
+const grid    = document.getElementById('grid');
+let cooldownUntil = 0;
+const canVote = () => performance.now() >= cooldownUntil;
+function startCooldown(){ cooldownUntil = performance.now() + COOLDOWN_MS; grid.style.pointerEvents="none"; setTimeout(()=>grid.style.pointerEvents="auto", COOLDOWN_MS); }
+function showThanks(){ overlay.classList.add('show'); setTimeout(()=> overlay.classList.remove('show'), THANKS_MS); }
+
+/*** Hlasování ***/
+function sendOrQueue(payload){
+  if(!navigator.onLine){
+    const b = readBox(); b.push(payload); writeBox(b);
+  } else {
+    fetch(WEBHOOK_URL, {
+      method:"POST", mode:"no-cors",
+      headers:{ "Content-Type":"text/plain" },
+      body: JSON.stringify(payload), keepalive:true
+    }).catch(() => {
+      const b = readBox(); b.push(payload); writeBox(b);
+    });
+  }
+  flushBox();
+}
+function vote(value){
+  if(!canVote()) return;
+  startCooldown(); showThanks();
+  const payload = { time:new Date().toISOString(), value:Number(value), kiosk:"Bouda-kiosek", question:"Ohodnoť dnešní nákup" };
+  sendOrQueue(payload);
+}
+document.querySelectorAll('.btn').forEach(b=> b.addEventListener('click', ()=> vote(b.dataset.value), {passive:true}));
+
+/*** Fullscreen + WakeLock po prvním kliknutí ***/
+async function enterFullscreenAndWake() {
+  try { if (!document.fullscreenElement) await document.documentElement.requestFullscreen(); } catch(_) {}
+  try {
+    if ('wakeLock' in navigator) {
+      window._wl = await navigator.wakeLock.request('screen');
+      document.addEventListener('visibilitychange', async ()=>{
+        if (document.visibilityState === 'visible') {
+          try { window._wl = await navigator.wakeLock.request('screen'); } catch(_){}
+        }
+      });
+    }
+  } catch(_) {}
+}
+document.addEventListener('click', function once(){
+  enterFullscreenAndWake();
+  document.removeEventListener('click', once, {capture:true});
+}, {capture:true, once:true});
+
+/*** PWA: registrace SW ***/
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('./sw.js').catch(()=>{});
+}
+
+/*** PWA: tlačítko „Instalovat“ ***/
+let defPrompt;
+const installBtn = document.getElementById('installBtn');
+window.addEventListener('beforeinstallprompt', (e)=>{
+  e.preventDefault();
+  defPrompt = e;
+  installBtn.style.display = 'block';
+});
+installBtn.addEventListener('click', async ()=>{
+  if(!defPrompt) return;
+  defPrompt.prompt();
+  await defPrompt.userChoice;
+  defPrompt = null;
+  installBtn.style.display = 'none';
+});
+
+/*** první tichý flush po startu ***/
+flushBox();
+</script>
+</body>
+  <script>
+// 1) Zruš context menu, výběr, drag & drop
+addEventListener('contextmenu', e => e.preventDefault(), {capture:true});
+addEventListener('selectstart', e => e.preventDefault(), {capture:true});
+addEventListener('dragstart',  e => e.preventDefault(), {capture:true});
+addEventListener('copy',       e => e.preventDefault(), {capture:true});
+addEventListener('cut',        e => e.preventDefault(), {capture:true});
+addEventListener('paste',      e => e.preventDefault(), {capture:true});
+
+// 2) Zneškodni odkazy a okna
+addEventListener('click', e => {
+  const a = e.target.closest('a, [role="link"], [onclick]');
+  if (a) e.preventDefault();
+}, {capture:true});
+window.open = function(){ return null; };
+
+// 3) Tvrdé „Back lock“ + auto-recovery
+(function(){
+  try { for (let i=0;i<8;i++) history.pushState({k:i}, ''); } catch(_){}
+  addEventListener('popstate', e=>{ try{ history.go(1); }catch(_){ } }, {capture:true});
+  if (!location.hash) { try { history.replaceState(null, '', location.pathname + '#home'); } catch(_){ } }
+  const recover=()=>{ if (document.visibilityState==='visible') {
+    try { history.replaceState(null, '', location.pathname + '#home'); } catch(_){ }
+  }};
+  addEventListener('visibilitychange', recover);
+  setInterval(recover, 1000);
+})();
+</script>
+
+</html>
